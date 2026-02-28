@@ -1,35 +1,213 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import { useEffect, useMemo, useState } from "react";
+import SearchBar from "./components/SearchBar";
+import MovieGrid from "./components/MovieGrid";
+import MovieDetails from "./components/MovieDetails";
+import Favorites from "./components/Favorites";
 
-function App() {
-  const [count, setCount] = useState(0)
+const API_KEY = import.meta.env.VITE_OMDB_API_KEY;
+
+const safeParse = (value, fallback) => {
+  try {
+    return JSON.parse(value) ?? fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+export default function App() {
+  const [query, setQuery] = useState("batman");
+  const [movies, setMovies] = useState([]);
+  const [selectedId, setSelectedId] = useState(null);
+  const [selectedMovie, setSelectedMovie] = useState(null);
+
+  const [favorites, setFavorites] = useState(() =>
+    safeParse(localStorage.getItem("favorites"), [])
+  );
+
+  const [loadingSearch, setLoadingSearch] = useState(false);
+  const [loadingDetails, setLoadingDetails] = useState(false);
+  const [error, setError] = useState("");
+
+  
+  useEffect(() => {
+    localStorage.setItem("favorites", JSON.stringify(favorites));
+  }, [favorites]);
+   // Search movies
+  const searchMovies = async (term) => {
+    if (!API_KEY) {
+      setError("Missing OMDb API key. Add VITE_OMDB_API_KEY to your .env file.");
+      return;
+    }
+    if (!term.trim()) return;
+
+    setError("");
+    setLoadingSearch(true);
+    setSelectedId(null);
+    setSelectedMovie(null);
+
+    try {
+      const res = await fetch(
+        `https://www.omdbapi.com/?apikey=${API_KEY}&s=${encodeURIComponent(
+          term.trim()
+        )}&type=movie`
+      );
+      const data = await res.json();
+
+      if (data.Response === "False") {
+        setMovies([]);
+        setError(data.Error || "No results found.");
+      } else {
+        setMovies(data.Search || []);
+      }
+    } catch (e) {
+      setError("Network error. Please try again.");
+    } finally {
+      setLoadingSearch(false);
+    }
+  };
+
+  // Fetch movie details when selectedId changes 
+  useEffect(() => {
+    const fetchDetails = async () => {
+      if (!API_KEY) return;
+      if (!selectedId) return;
+
+      setError("");
+      setLoadingDetails(true);
+      setSelectedMovie(null);
+
+      try {
+        const res = await fetch(
+          `https://www.omdbapi.com/?apikey=${API_KEY}&i=${selectedId}&plot=full`
+        );
+        const data = await res.json();
+
+        if (data.Response === "False") {
+          setError(data.Error || "Could not load movie details.");
+        } else {
+          setSelectedMovie(data);
+        }
+      } catch (e) {
+        setError("Network error loading details.");
+      } finally {
+        setLoadingDetails(false);
+      }
+    };
+
+    fetchDetails();
+  }, [selectedId]);
+
+  // Initial search on first load
+  useEffect(() => {
+    searchMovies(query);
+  
+  }, []);
+
+  const favoriteIds = useMemo(
+    () => new Set(favorites.map((m) => m.imdbID)),
+    [favorites]
+  );
+
+  const toggleFavorite = (movieSummaryOrDetails) => {
+    const imdbID = movieSummaryOrDetails?.imdbID;
+    if (!imdbID) return;
+
+    setFavorites((prev) => {
+      const exists = prev.some((m) => m.imdbID === imdbID);
+      if (exists) return prev.filter((m) => m.imdbID !== imdbID);
+
+      // Store a compact object 
+      const compact = {
+        imdbID,
+        Title: movieSummaryOrDetails.Title,
+        Year: movieSummaryOrDetails.Year,
+        Poster: movieSummaryOrDetails.Poster,
+      };
+
+      return [compact, ...prev];
+    });
+  };
+
+  const clearSelection = () => {
+    setSelectedId(null);
+    setSelectedMovie(null);
+  };
 
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.jsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
-}
+    <div className="app">
+      {/* Sticky Nav  */}
+      <header className="header">
+        <div className="header-inner">
+          <h1 className="brand">MovieFinder</h1>
+          <p className="subtitle">Search movies with OMDb • Save favorites</p>
+        </div>
 
-export default App
+        <SearchBar
+          query={query}
+          setQuery={setQuery}
+          onSearch={() => searchMovies(query)}
+          loading={loadingSearch}
+        />
+      </header>
+
+      <main className="main">
+        {error ? <div className="error">{error}</div> : null}
+
+        <section className="content">
+          <div className="panel">
+            <div className="panel-header">
+              <h2>Results</h2>
+              {loadingSearch ? <span className="badge">Loading…</span> : null}
+            </div>
+
+            <MovieGrid
+              movies={movies}
+              onSelect={setSelectedId}
+              selectedId={selectedId}
+              favoriteIds={favoriteIds}
+              onToggleFavorite={toggleFavorite}
+            />
+          </div>
+
+          <div className="panel">
+            <div className="panel-header">
+              <h2>Details</h2>
+              {loadingDetails ? <span className="badge">Loading…</span> : null}
+              {selectedId ? (
+                <button className="btn ghost" onClick={clearSelection}>
+                  Clear
+                </button>
+              ) : null}
+            </div>
+
+            <MovieDetails
+              movie={selectedMovie}
+              loading={loadingDetails}
+              isFavorite={selectedMovie ? favoriteIds.has(selectedMovie.imdbID) : false}
+              onToggleFavorite={toggleFavorite}
+            />
+          </div>
+        </section>
+
+        <section className="panel">
+          <div className="panel-header">
+            <h2>Favorites</h2>
+            <span className="badge">{favorites.length}</span>
+          </div>
+
+          <Favorites
+            favorites={favorites}
+            onSelect={setSelectedId}
+            onRemove={(id) =>
+              setFavorites((prev) => prev.filter((m) => m.imdbID !== id))
+            }
+          />
+        </section>
+      </main>
+
+      <footer className="footer">
+        Data from OMDb API • Built with React + CSS
+      </footer>
+    </div>
+  );
+}
