@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import SearchBar from "./components/SearchBar";
 import MovieGrid from "./components/MovieGrid";
 import MovieDetails from "./components/MovieDetails";
@@ -28,17 +28,37 @@ export default function App() {
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [error, setError] = useState("");
 
-  
+  // Persist favorites 
   useEffect(() => {
     localStorage.setItem("favorites", JSON.stringify(favorites));
   }, [favorites]);
-   // Search movies
-  const searchMovies = async (term) => {
+
+  // DEDUPE results to avoid duplicate key warnings
+  const uniqueMovies = useMemo(() => {
+    const map = new Map();
+    for (const m of movies) map.set(m.imdbID, m);
+    return Array.from(map.values());
+  }, [movies]);
+
+  const favoriteIds = useMemo(
+    () => new Set(favorites.map((m) => m.imdbID)),
+    [favorites]
+  );
+
+  const clearSelection = () => {
+    setSelectedId(null);
+    setSelectedMovie(null);
+  };
+
+  // Search movies 
+  const searchMovies = useCallback(async (term) => {
     if (!API_KEY) {
       setError("Missing OMDb API key. Add VITE_OMDB_API_KEY to your .env file.");
       return;
     }
     if (!term.trim()) return;
+
+    const controller = new AbortController();
 
     setError("");
     setLoadingSearch(true);
@@ -49,7 +69,8 @@ export default function App() {
       const res = await fetch(
         `https://www.omdbapi.com/?apikey=${API_KEY}&s=${encodeURIComponent(
           term.trim()
-        )}&type=movie`
+        )}&type=movie`,
+        { signal: controller.signal }
       );
       const data = await res.json();
 
@@ -60,25 +81,34 @@ export default function App() {
         setMovies(data.Search || []);
       }
     } catch (e) {
-      setError("Network error. Please try again.");
+      if (e.name !== "AbortError") setError("Network error. Please try again.");
     } finally {
       setLoadingSearch(false);
     }
-  };
 
-  // Fetch movie details when selectedId changes 
+    return () => controller.abort();
+  }, []);
+
+  // Initial search 
   useEffect(() => {
-    const fetchDetails = async () => {
-      if (!API_KEY) return;
-      if (!selectedId) return;
+    searchMovies(query);
+  }, [searchMovies]);
 
+  // Fetch details 
+  useEffect(() => {
+    if (!API_KEY || !selectedId) return;
+
+    const controller = new AbortController();
+
+    const fetchDetails = async () => {
       setError("");
       setLoadingDetails(true);
       setSelectedMovie(null);
 
       try {
         const res = await fetch(
-          `https://www.omdbapi.com/?apikey=${API_KEY}&i=${selectedId}&plot=full`
+          `https://www.omdbapi.com/?apikey=${API_KEY}&i=${selectedId}&plot=full`,
+          { signal: controller.signal }
         );
         const data = await res.json();
 
@@ -88,25 +118,15 @@ export default function App() {
           setSelectedMovie(data);
         }
       } catch (e) {
-        setError("Network error loading details.");
+        if (e.name !== "AbortError") setError("Network error loading details.");
       } finally {
         setLoadingDetails(false);
       }
     };
 
     fetchDetails();
+    return () => controller.abort();
   }, [selectedId]);
-
-  // Initial search on first load
-  useEffect(() => {
-    searchMovies(query);
-  
-  }, []);
-
-  const favoriteIds = useMemo(
-    () => new Set(favorites.map((m) => m.imdbID)),
-    [favorites]
-  );
 
   const toggleFavorite = (movieSummaryOrDetails) => {
     const imdbID = movieSummaryOrDetails?.imdbID;
@@ -116,7 +136,6 @@ export default function App() {
       const exists = prev.some((m) => m.imdbID === imdbID);
       if (exists) return prev.filter((m) => m.imdbID !== imdbID);
 
-      // Store a compact object 
       const compact = {
         imdbID,
         Title: movieSummaryOrDetails.Title,
@@ -128,14 +147,8 @@ export default function App() {
     });
   };
 
-  const clearSelection = () => {
-    setSelectedId(null);
-    setSelectedMovie(null);
-  };
-
   return (
     <div className="app">
-      {/* Sticky Nav  */}
       <header className="header">
         <div className="header-inner">
           <h1 className="brand">MovieFinder</h1>
@@ -161,7 +174,7 @@ export default function App() {
             </div>
 
             <MovieGrid
-              movies={movies}
+              movies={uniqueMovies}
               onSelect={setSelectedId}
               selectedId={selectedId}
               favoriteIds={favoriteIds}
@@ -174,7 +187,7 @@ export default function App() {
               <h2>Details</h2>
               {loadingDetails ? <span className="badge">Loading…</span> : null}
               {selectedId ? (
-                <button className="btn ghost" onClick={clearSelection}>
+                <button className="btn ghost" onClick={clearSelection} type="button">
                   Clear
                 </button>
               ) : null}
@@ -205,9 +218,7 @@ export default function App() {
         </section>
       </main>
 
-      <footer className="footer">
-        Data from OMDb API • Built with React + CSS
-      </footer>
+      <footer className="footer">Data from OMDb API • Built with React + CSS</footer>
     </div>
   );
 }

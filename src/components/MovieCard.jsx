@@ -13,7 +13,16 @@ export default function MovieCard({
   return (
     <div className={`card ${isSelected ? "selected" : ""}`}>
       <button className="card-click" onClick={onSelect} type="button">
-        <img className="poster" src={poster} alt={`${movie.Title} poster`} />
+        <img
+  className="poster"
+  src={poster}
+  alt={`${movie.Title} poster`}
+  onError={(e) => {
+    e.currentTarget.onerror = null;
+    e.currentTarget.src = posterFallback;
+  }}
+/>
+        
         <div className="card-body">
           <h3 className="card-title">{movie.Title}</h3>
           <p className="muted">{movie.Year}</p>
